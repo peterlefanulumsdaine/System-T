@@ -9,113 +9,104 @@ Require Import Omega.
 Open Scope t_scope.
 Open Scope list_scope.
 
-Global Reserved Notation " Γ '⊢' M ':::' A " (at level 70).
+Global Reserved Notation " n '||-' A " (at level 70).
+Global Reserved Notation " Γ '|-' t ':::' A " (at level 70).
 Global Reserved Notation " γ ':–:' Γ " (at level 70).
 
 Section Statics.
 
-  (* Typing relation for terms *)
-  Inductive types : list ty -> te -> ty -> Prop :=
-  | tc_var  : forall A Γ n
+(* Well-typedness of types *)
+
+Inductive wf_type : nat -> ty -> Prop :=
+  | tty_var : forall n k, (n > k) -> n ||- ##k
+  | tty_arrows : forall n A B, (n ||- A) -> (n ||- B) ->
+      n ||- A arrows B
+  | tc_forall : forall n A, ((S n) ||- A) ->
+      n ||- (allX, A)
+where " n ||- A " := (wf_type n A) : t_scope.
+
+(* Typing relation for terms *)
+Inductive types : list ty -> tm -> ty -> Prop :=
+  | tc_var  : forall Γ A n
       (HFind : nth_error Γ n = Some A),
-      Γ ⊢ #n ::: A
-  | tc_lam : forall A B Γ M
-      (HT : A :: Γ ⊢ M ::: B),
-      Γ ⊢ λ A, M ::: A → B
-  | tc_app : forall Γ A B M N
-      (HTM : Γ ⊢ M ::: A → B)
-      (HTN : Γ ⊢ N ::: A),
-      Γ ⊢ M @ N ::: B
-  | tc_z   : forall Γ,
-      Γ ⊢ z ::: ω
-  | tc_s   : forall Γ M
-      (HT : Γ ⊢ M ::: ω),
-      Γ ⊢ s M ::: ω
-  | tc_rec : forall Γ A M M₀ M₁
-      (HTM : Γ ⊢ M ::: ω)
-      (HT0 : Γ ⊢ M₀ ::: A)
-      (HTS : ω :: A :: Γ ⊢ M₁ ::: A),
-      Γ ⊢ rec M M₀ M₁ ::: A
-  | tc_hd  : forall Γ A M
-      (HTM : Γ ⊢ M ::: stream A),
-      Γ ⊢ hd M ::: A
-  | tc_tl  : forall Γ A M
-      (HTM : Γ ⊢ M ::: stream A),
-      Γ ⊢ tl M ::: stream A
-  | tc_seed: forall Γ A M M₀ M₁
-      (HTM : Γ ⊢ M ::: A)
-      (HTH : A :: Γ ⊢ M₀ ::: A)
-      (HTT : A :: Γ ⊢ M₁ ::: A),
-      Γ ⊢ seed M M₀ M₁ ::: stream A
-  where " Γ ⊢ M ::: A " := (types Γ M A) : t_scope.
+      Γ |- #n ::: A
+  | tc_lam : forall Γ A B t
+      (HT : A :: Γ |- t ::: B),
+      Γ |- λx A, t ::: (A arrows B)
+  | tc_app : forall Γ A B s t
+      (HTs : Γ |- s ::: A arrows B)
+      (HTt : Γ |- t ::: A),
+      Γ |- s * t ::: B
+  | tc_Lam : forall Γ A t
+      (HT : Γ |- t ::: A),
+      Γ |- (ΛX , t) ::: allX, A
+  | tc_inst : forall Γ A t B
+      (HT : Γ |- t ::: allX, A),
+      Γ |- t @ B ::: [B /// 0] A 
+where " Γ |- t ::: A " := (types Γ t A) : t_scope.
 
   (* Typing relation for substitutions (only for closed substitutions) *)
-  Fixpoint tcmt γ Γ : Prop :=
-    match γ, Γ with
-      | nil, nil => True
-      | M :: γ, A :: Γ => nil ⊢ M ::: A /\ γ :–: Γ
-      | _, _ => False
-    end where " γ ':–:' Γ " := (tcmt γ Γ) : t_scope.
+Fixpoint types_list (γ:list tm) (Γ:list ty) : Prop :=
+  match γ, Γ with
+    | nil, nil => True
+    | M :: γ, A :: Γ => nil |- M ::: A /\ γ :–: Γ
+    | _, _ => False
+  end where " γ ':–:' Γ " := (types_list γ Γ) : t_scope.
 
 End Statics.
 
-Global Reserved Notation " M ↦ N " (at level 70).
-Global Reserved Notation " M ↦* N " (at level 70).
+Global Reserved Notation " M |-> N " (at level 70).
+Global Reserved Notation " M |->* N " (at level 70).
 Section Dynamics.
 
-  Inductive value : te -> Prop :=
-  | val_z   :
-      value z
-  | val_s   : forall M,
-      value (s M)
-  | val_lam : forall A M,
-      value (λ A, M)
-  | val_seed: forall M M₀ M₁,
-      value (seed M M₀ M₁).
+Inductive value : tm -> Prop :=
+  | val_var : forall n, value (#n)
+  | val_lam : forall A t, value (λx A, t)
+  | val_Lam : forall t, value (ΛX, t).
 
-  Inductive step : te -> te -> Prop :=
-  | red_β    : forall A M N,
-      (λ A, M) @ N ↦ [N :: nil ! 0]M
-  | red_recz : forall M₀ M₁,
-      rec z M₀ M₁ ↦ M₀
-  | red_recs : forall M M₀ M₁,
-      rec (s M) M₀ M₁ ↦ [M :: rec M M₀ M₁ :: nil ! 0] M₁
-  | red_hds  : forall M M₀ M₁,
-      hd (seed M M₀ M₁) ↦ [M ↑ 0]M₀
-  | red_tls  : forall M M₀ M₁,
-      tl (seed M M₀ M₁) ↦ seed [M ↑ 0]M₁ M₀ M₁
-  | red_appC : forall M M' N
-      (HR : M ↦ M'),
-      M @ N ↦ M' @ N
-  | red_recC : forall M M' M₀ M₁
-      (HR : M ↦ M'),
-      rec M M₀ M₁ ↦ rec M' M₀ M₁
-  | red_hdC  : forall M M'
-      (HR : M ↦ M'),
-      hd M ↦ hd M'
-  | red_tlC  : forall M M'
-      (HR : M ↦ M'),
-      tl M ↦ tl M'
-  where " M ↦ N " := (step M N) : t_scope.
-  Definition steps := clos_refl_trans_1n _ step.
+Inductive steps : tm -> tm -> Prop :=
+  | red_β    : forall A t0 t1,
+      (λx A, t0) * t1 |-> tm_sub_tm t1 0 t0
+  | red_app  : forall t0 t1 s,
+      t0 |-> t1 -> t0 * s |-> t1 * s
+  | red_τ : forall t A,
+      (ΛX, t) @ A |-> [A // 0] t
+  | red_inst  : forall t0 t1 A,
+      t0 |-> t1 -> t0 @ A |-> t1 @ A
+where " M |-> N " := (steps M N) : t_scope.
+(* very lazy computation! *)
+
+Definition reduces := clos_refl_trans _ steps.
 
 End Dynamics.
 
-Notation " Γ ⊢ M ::: A " := (types Γ M A) : t_scope.
-Notation " γ ':–:' Γ " := (tcmt γ Γ) : t_scope.
-Notation " M ↦* N " := (steps M N) : t_scope.
-Notation " M ↦ N " := (step M N) : t_scope.
+Notation " n ||- A " := (wf_type n A) : t_scope.
+Notation " Γ |- t ::: A " := (types Γ t A) : t_scope.
+Notation " γ ':–:' Γ " := (types_list γ Γ) : t_scope.
+Notation " t0 |-> t1 " := (steps t0 t1) : t_scope.
+Notation " t0 |->* t1 " := (reduces t0 t1) : t_scope.
 
 Section Properties.
 
-  Lemma weaken : forall Γ Δ K A (HT : Γ ⊢ K ::: A), (Γ ++ Δ ⊢ K ::: A).
+  Lemma weaken : forall Γ Δ t A (HT : Γ |- t ::: A), (Γ ++ Δ |- t ::: A).
   Proof.
-    induction 1; eauto using types; [].
+    intros Γ Δ.  induction 1; eauto using types.
     apply tc_var.
-    generalize dependent n; induction Γ; intros; simpl; destruct n; simpl in *;
-      discriminate || intuition.
+    generalize dependent Γ.  induction n as [ | n' IH]; intros Γ.
+      destruct Γ; intros H; inversion H; reflexivity.
+      destruct Γ.
+        intros H; inversion H.
+        intros H. simpl in *.  apply IH.  auto.
   Qed.
 
+(*
+Lemma preservation : forall Γ A t0 t1
+  (H_ty : Γ |-> t0 ::: A)
+  (H_red : t0 |-> t1),
+  Γ |-> N ::: A.
+*)
+
+(*
   Lemma ssubst_type : forall M K A B Δ
     (HTK : nil ⊢ K ::: A)
     (HTM : Δ ++ A :: nil ⊢ M ::: B),
@@ -294,7 +285,7 @@ Section Properties.
     (* cong tl *)
     apply tc_tl; apply IHHT; tauto.
   Qed.
-
+*)
 End Properties.
 
 Close Scope t_scope.

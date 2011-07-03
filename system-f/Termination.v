@@ -1,66 +1,138 @@
 (** This file contains the termination argument via logical relations *)
 
 Require Import Semantics.
-Open Scope t_scope.
 Open Scope list_scope.
+Open Scope t_scope.
 
 Section Definitions.
 
-  (* Logical relation at type ω *)
-  Inductive Rω : te -> Prop :=
-  | Rω_z : forall M (HRed : M ↦* z), Rω M
-  | Rω_s : forall M M' (HRed : M ↦* s M') (HR : Rω M'), Rω M.
+Definition rc :=
+  { P : tm -> Prop | forall t0 t1, t0 |-> t1-> (P t1) -> (P t0) }.
 
-  (* Logical relation at type stream, parameterised with the relation at element type *)
-  CoInductive Rstream : (te -> Type) -> te -> Prop :=
-  | Rs : forall M P (HHD : P (hd M)) (HTL : Rstream P (tl M)), Rstream P M.
+Definition underlying_fun : rc -> tm -> Prop :=
+  fun fp => match fp with exist f _ => f end.
 
-  (* The reducibility relation: has to be defined as a fixpoint, since Coq doesn't allow
-     for negative occurrences of a relation in the A₁ → A₂ case *)
-  Fixpoint R A M : Prop :=
-    match A with
-      | ω => Rω M
-      | A₁ → A₂ => forall N (HTN : nil ⊢ N ::: A₁) (HR : R A₁ N), R A₂ (M @ N)
-      | stream A => Rstream (R A) M
-    end.
+Coercion underlying_fun : rc >-> Funclass.
 
-  (* Reduciblity for the whole contexts *)
-  Fixpoint rctx γ Γ :=
-    match γ, Γ with
-      | nil, nil => True
-      | M :: γ, A :: Γ => R A M /\ rctx γ Γ
-      | _, _ => False
-    end.
+Definition envir := list rc.
+
+Definition rc_empty : rc.
+Proof.
+  exists (fun t => False).
+  intros; auto.
+Defined.
+
+Definition lookup : envir -> nat -> rc := nth_default rc_empty.
+(* Not very principled… should really use “nth_error”. *)
+
+Definition rc_arrows : ty -> rc -> ty -> rc -> rc.
+Proof.
+  intros A RA B RB.
+  exists (fun t => 
+    exists t':tm, t |->* (λx A, t') 
+               /\ forall w, (RA w) -> (RB (tm_sub_tm w 0 t'))).
+  intros t0 t1 Ht0t1 [t' [Ht1t' Ht'red]].
+  exists t'; split; try assumption.
+  apply rt_trans with t1.  constructor; assumption.  assumption.
+Defined.
+(* Perhaps this shouldn’t really have B in its hypotheses? *)
+
+Definition rc_forall : (rc -> rc) -> rc.
+Proof.
+  intros RA.  
+  exists (fun t =>
+    exists t':tm, t |->* (ΛX, t')
+               /\ forall RX, (RA RX) t').
+  intros t0 t1 Ht0t1 [t' [Ht1t' HRt']].
+  exists t'; split; try assumption.
+  apply rt_trans with t1.  constructor; assumption.  assumption.
+Defined.
+   
+Fixpoint R (ρ : envir) (A : ty) : rc :=
+match A with
+  | ##k => lookup ρ k
+  | A arrows B => rc_arrows A (R ρ A) B (R ρ B)
+  | allX, A => rc_forall (fun RX => R (RX :: ρ) A)
+end.
+
+Definition rclist := list rc. 
+(* This aliasing seems to be needed to define coercion below. *)
+
+Fixpoint rc_list_app (Rs : rclist) (γ : list tm) : Prop :=
+  match Rs with
+  | nil => match γ with
+    | nil => True
+    | _ => False
+    end
+  | (R :: Rs') => match γ with
+    | nil => False
+    | (t :: γ') => R [γ'!0]t /\ rc_list_app Rs' γ'
+    end
+  end.
+
+Coercion rc_list_app : rclist >-> Funclass.
+
+Definition R_list : envir -> list ty -> list tm -> Prop := 
+  fun ρ Γ => rc_list_app (map (R ρ) Γ).
 
 End Definitions.
 
 Section Termination_proof.
 
-  Lemma head_expansion : forall A M N
-    (HR : R A N)
-    (HS : M ↦ N),
-    R A M.
-  Proof.
-    induction A; intros; simpl in *.
-    (* nat *)
-    inversion HR.
-      apply Rω_z; unfold steps; econstructor; eassumption.
-    apply Rω_s with M'; [| assumption]; econstructor; eassumption.
-    (* arr *)
-    intros.
-    eapply IHA2; [| apply red_appC; eassumption].
-    apply HR; assumption.
-    (* stream *)
-    (* We need coinduction to prove the property here, and a stronger lemma. *)
-    assert (HT : exists K : te, (M ↦ K) /\ Rstream (R A) K)
-      by (exists N; tauto).
-    clear HS HR; destruct HT as [K [HRed HR]]; generalize dependent K; revert M.
-    cofix; intros.
-    inversion HR; subst; apply Rs.
-      eapply IHA; [eassumption | apply red_hdC; eassumption].
-    eapply head_expansion; [| eassumption].
-    apply red_tlC; assumption.
-  Qed.
+Lemma compat_var : 
+      forall n Γ A (HFind : nth_error Γ n = Some A),
+      forall ρ γ (HRed : R_list ρ Γ γ),
+      R ρ A ([γ !0] #n).
+Proof.
+  induction n as [ | n' IH]; intros; destruct Γ as [ | A' Γ']; inversion HFind;
+  destruct γ as [ | t γ']; inversion HRed; subst; clear H1.
+  (* Case n = 0 *)
+    simpl.  assumption. 
+  (* Case n = S n' *)
+    simpl.  unfold R_list in *; simpl in HRed.
+    apply IH with Γ'; tauto.
+Qed.
+
+Lemma compat_lam : forall Γ A B t
+      (Ht : forall ρ' γ' (HRed' : R_list ρ' (A :: Γ) γ'), R ρ' B [γ'!0]t),
+      forall ρ γ (HRed : R_list ρ Γ γ),
+      R ρ (A arrows B) [γ!0](λx A, t).
+Proof.
+  intros.  simpl.  exists ([map (tm_bump_tm 0) γ ! 1]t).  split.
+  rewrite list_sub_lam.  apply rt_refl.
+  intros w HRw.  apply Ht.
+Qed.
+
+
+Theorem fundamental_thm : forall ρ A Γ t γ,
+  (Γ |- t ::: A) -> (R_list ρ Γ γ) -> R ρ A [γ !0 t].
+
+Inductive types : list ty -> tm -> ty -> Prop :=
+  | tc_var  : forall Γ A n
+      (HFind : nth_error Γ n = Some A),
+      Γ |- #n ::: A
+  | tc_lam : forall Γ A B t
+      (HT : A :: Γ |- t ::: B),
+      Γ |- λx A, t ::: (A arrows B)
+  | tc_app : forall Γ A B s t
+      (HTs : Γ |- s ::: A arrows B)
+      (HTt : Γ |- t ::: A),
+      Γ |- s * t ::: B
+  | tc_Lam : forall Γ A t
+      (HT : Γ |- t ::: A),
+      Γ |- (ΛX , t) ::: allX, A
+  | tc_inst : forall Γ A t B
+      (HT : Γ |- t ::: allX, A),
+      Γ |- t @ B ::: [B /// 0] A 
+
+
+
+
+
+
+
+
+
 
   (* lifting of head expansion to reflexive transitive closure *)
   Lemma head_exp_star : forall A M N
