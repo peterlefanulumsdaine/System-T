@@ -309,6 +309,14 @@ Proof.
   apply IH.  tauto.  apply (closed_subst_closes_one t s 0 (length γ')); tauto.
 Qed.
 
+Lemma ty_bump_pres_list_closed : forall γ j,
+  closed_list γ -> closed_list (List.map (ty_bump_tm j) γ).
+Proof.
+  induction γ as [ | t γ' IH]; simpl; intros j H_cl; try auto.
+  (* Case γ = t :: γ' *)
+  split.  apply ty_bump_pres_closed; tauto.  apply IH; tauto.
+Qed.
+
 (*
 Goal:
  [γ ! 0]([w \ 0]t) = [w \ 0]([γ ! 1]t)

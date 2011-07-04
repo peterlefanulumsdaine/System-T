@@ -38,7 +38,7 @@ Inductive types : list ty -> tm -> ty -> Prop :=
       (HTt : Γ |- t ::: A),
       Γ |- s * t ::: B
   | tc_Lam : forall Γ A t
-      (HT : Γ |- t ::: A),
+      (HT : (map (ty_bump_ty 0) Γ) |- t ::: A),
       Γ |- (ΛX , t) ::: allX, A
   | tc_inst : forall Γ A t B
       (HT : Γ |- t ::: allX, A),
@@ -88,16 +88,18 @@ Notation " t0 |->* t1 " := (reduces t0 t1) : t_scope.
 
 Section Properties.
 
-  Lemma weaken : forall Γ Δ t A (HT : Γ |- t ::: A), (Γ ++ Δ |- t ::: A).
+  Lemma weaken : forall Γ t A (HT : Γ |- t ::: A) Δ, (Γ ++ Δ |- t ::: A).
   Proof.
-    intros Γ Δ.  induction 1; eauto using types.
-    apply tc_var.
+    intros Γ t A HT; induction HT; intros; eauto using types.
+    (* Case var *) apply tc_var.
     generalize dependent Γ.  induction n as [ | n' IH]; intros Γ.
       destruct Γ; intros H; inversion H; reflexivity.
       destruct Γ.
         intros H; inversion H.
         intros H. simpl in *.  apply IH.  auto.
-  Qed.
+    (* Case lambda *) constructor.  apply IHHT.
+    (* Case Lambda *) constructor.  rewrite map_app.  apply IHHT.
+Qed.
 
 Lemma reduce_in_app : forall s0 s1 t, (s0 |->* s1) -> (s0 * t) |->* (s1 * t).
 Proof.
@@ -123,7 +125,8 @@ Lemma if_types_then_closed : forall Γ t A,
         (Γ |- t ::: A) -> closed (length Γ) t.
 Proof.
   intros Γ t A H_typed.  induction H_typed; simpl; try tauto.
-  (* Only case #n *) apply nth_error_length with A.  assumption.
+  (* Case #n *) apply nth_error_length with A.  assumption.
+  (* Case ΛX *) rewrite map_length in IHH_typed.  assumption.
 Qed.
 
 (*

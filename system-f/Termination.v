@@ -14,17 +14,6 @@ Definition underlying_fun : rc -> tm -> Prop :=
 
 Coercion underlying_fun : rc >-> Funclass.
 
-Lemma head_expansion (RC:rc) s t : (s |->* t) -> (RC t) -> (RC s).
-  intros H_red.
-  induction H_red as [s t H_step | s | s s' t Hss' IHl Hs't IHr]; intros H_RC.
-  (* Case step *)
-    destruct RC as [RCP RChe]; simpl in *. apply RChe with t; auto.
-  (* Case refl *)
-    tauto.
-  (* Case trans *)
-    tauto.
-Qed.
-
 Definition envir := list rc.
 
 Definition rc_empty : rc.
@@ -95,6 +84,17 @@ Notation " Γ |= t :=: A " := (models Γ t A) (at level 70) : t_scope.
 
 Section Misc_lemmas.
 
+Lemma head_expansion (RC:rc) s t : (s |->* t) -> (RC t) -> (RC s).
+  intros H_red.
+  induction H_red as [s t H_step | s | s s' t Hss' IHl Hs't IHr]; intros H_RC.
+  (* Case step *)
+    destruct RC as [RCP RChe]; simpl in *. apply RChe with t; auto.
+  (* Case refl *)
+    tauto.
+  (* Case trans *)
+    tauto.
+Qed.
+
 Lemma R_list_lengths_match ρ Γ : forall γ,
   R_list ρ Γ γ -> length Γ = length γ.
 Proof.
@@ -102,6 +102,14 @@ Proof.
     tauto.  destruct H_R as [_ H_R'].  fold rc_list_app in *.
     assert (length Γ' = length γ'). apply IH; apply H_R'.
     omega.
+Qed.
+
+Lemma R_vs_ty_bump ρ A : forall σ RX t,
+  (R ρ A t) <-> (R (σ ++ RX :: ρ) (ty_bumps_ty (S (length σ)) A)
+                                  (ty_bumps_tm (S (length σ)) t)).
+Proof.
+  generalize dependent ρ; induction A as [ n | A0 IH0 A1 IH1 | A0 IH ].
+  simpl.
 Qed.
 
 End Misc_lemmas.
@@ -155,8 +163,15 @@ Proof.
 Qed.
 
 Lemma compat_Lam : forall Γ A t
-      (HT : Γ |= t :=: A),
+      (HT : (map (ty_bump_ty 0) Γ) |= t :=: A),
       Γ |= (ΛX , t) :=: allX, A.
+Proof.
+  unfold models in *; intros; simpl.
+  exists [(List.map (ty_bump_tm 0) γ) ! 0]t.  split.
+  (* reduction *)  rewrite list_sub_Lam.  apply rt_refl.
+  (* reducibility *)  intros RX.  apply HT.
+  apply ty_bump_pres_list_closed; auto.
+  (* Sod; I’ve gotten myself quite confused about environments!  What’s going on?? *)
 Qed.
 
 Theorem fundamental_thm : forall A Γ t,
