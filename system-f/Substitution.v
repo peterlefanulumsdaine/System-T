@@ -25,7 +25,9 @@ Ltac order_cases := repeat (simpl ;
     | _ => auto 
   end).
 
-
+Ltac simpl_rewrite eq_hyp :=
+  let H := fresh in  
+    set (H := eq_hyp); simpl in H; rewrite H; clear H.
 
 Fixpoint ty_bump_ty (k:nat) (A:ty) :=
   match A with
@@ -70,6 +72,7 @@ Fixpoint tm_bumps_tm (k:nat) (t:tm) :=
     | S k' => tm_bump_tm 0 (tm_bumps_tm k' t)
   end.
 
+(*
 Lemma ty_ty_bump_ty_commutes A : forall j k,
   (ty_bump_ty (S (j+k)) (ty_bump_ty j A)) = (ty_bump_ty j (ty_bump_ty (j+k) A)).
 Proof. 
@@ -118,7 +121,7 @@ Proof.
     auto.  
     rewrite IH.  apply ty_tm_bump_bumps_commute.
 Qed.
-
+*)
 
 
 (* To understand the “unbumping” in substitution, think about how the variables of A, B (resp. s, t) should match up after an inst-reduction (resp. β-reduction) under a binder. *)
@@ -157,33 +160,48 @@ Fixpoint tm_sub_tm s n t :=
   end
 where " [ s \ n ] t " := (tm_sub_tm s n t) : t_scope.
 
-Lemma sub_closed_trivial : forall s n t, closed n t -> [s\n]t = t.
+Lemma sub_closed_trivial : forall t s j k, closed j t -> [s\(j+k)]t = t.
 Proof.
-  intros s n t; generalize dependent n.  generalize dependent s.
-  induction t as [ k | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl; intros.
-  (* Case #k *) destruct (eq_nat_dec k n).  exfalso; omega.  destruct (lt_dec k n).  reflexivity.  exfalso; omega.
-  (* Case λx A, t0 *)  rewrite IH; auto.
+  induction t as [ n | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl; intros.
+  (* Case #k *) order_cases.
+  (* Case λx A, t0 *)  simpl_rewrite (IH s (S j) k); auto.
   (* Case t0 * t1 *) rewrite IH0; try tauto.  rewrite IH1; tauto.
   (* Case ΛX, t0 *) rewrite IH; auto.
   (* Case t0 @ A *) rewrite IH; auto.
 Qed.
 
+Lemma bump_closed_trivial : forall t j k, closed j t -> tm_bump_tm (j+k) t = t.
+Proof.
+  induction t as [ n | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl; intros.
+  (* Case #n *) order_cases.  
+  (* Case λx A, t0 *)  simpl_rewrite (IH (S j) k); auto.
+  (* Case t0 * t1 *) rewrite IH0; try tauto.  rewrite IH1; tauto.
+  (* Case ΛX, t0 *) rewrite IH; auto.
+  (* Case t0 @ A *) rewrite IH; auto.
+Qed.
+
+Lemma bumps_closed_trivial : forall t k, closed 0 t -> tm_bumps_tm k t = t.
+Proof.
+  intros t k.  generalize dependent t.  induction k as [ | k' IH]; intros t Ht.
+  auto.  simpl.  rewrite IH; auto. apply (bump_closed_trivial t 0); auto.
+Qed.
+
+Lemma ty_bump_pres_closed : forall t j k, 
+  closed j t -> closed j (ty_bump_tm k t). 
+Proof.
+  induction t as [ n | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl; intros.
+  (* Case #n *) order_cases.  
+  (* Case λx A, t0 *)  simpl; auto.
+  (* Case t0 * t1 *) split.  apply IH0; tauto.  apply IH1; tauto.
+  (* Case ΛX, t0 *) auto.
+  (* Case t0 @ A *) auto.
+Qed.
+
+(*
 Lemma sub_bump_trivial : forall s n t, [s\n](tm_bump_tm n t) = t.
-Proof.
-  intros s n t.  generalize dependent n.  generalize dependent s.
-  induction t as [ k | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl; intros.
-  (* Case #k *)
-  destruct (eq_nat_dec k n) as [ekn|nekn] _eqn; simpl;
-  destruct (lt_dec k n) as [lkn|gekn] _eqn; try (exfalso; omega); subst.
-     unfold tm_sub_tm.  destruct (eq_nat_dec (S n) n); destruct (lt_dec (S n) n); try (exfalso; omega).  auto.
-     unfold tm_sub_tm.  rewrite Heqs0.  rewrite Heqs1.  auto.
-     unfold tm_sub_tm.  destruct (eq_nat_dec (S k) n); destruct (lt_dec (S k) n); try (exfalso; omega).  auto.
-  (* Case λx A, t0 *)  rewrite IH; auto.
-  (* Case t0 * t1 *) rewrite IH0; try tauto.  rewrite IH1; tauto.
-  (* Case ΛX, t0 *) rewrite IH; auto.
-  (* Case t0 @ A *) rewrite IH; auto.
-Qed.
+*)
 
+(*
 Lemma ty_bump_in_tm_sub : forall t j k s,
   ty_bump_tm j [s\k]t = [(ty_bump_tm j s)\k](ty_bump_tm j t).
 Proof.
@@ -194,6 +212,7 @@ Proof.
   (* Case ΛX, t0 *) rewrite IH; rewrite (ty_ty_bump_tm_commutes _ 0 j); auto.
   (* Case t0 @ A *) rewrite IH; auto.
 Qed.
+*)
 
 (* Substitution for the list γ, starting from index n in M *)
 (* Not — *not* simultaneous; done in order. *)
@@ -212,6 +231,90 @@ Proof.
   (* Case γ = s :: γ' *) simpl. apply IH.
 Qed.
 
+Lemma list_sub_app γ : forall n s t,
+  [γ!n](s * t) = [γ!n]s * [γ!n]t.
+Proof.
+  induction γ as [ | s γ' IH]; intros.
+  (* Case γ = nil *) auto.
+  (* Case γ = s :: γ' *) simpl. apply IH.
+Qed.
+
+Lemma list_sub_Lam γ : forall n t,
+  [γ!n](ΛX, t) = ΛX, [(List.map (ty_bump_tm 0) γ)!n]t.
+Proof.
+  induction γ as [ | s γ' IH]; intros.
+  (* Case γ = nil *) auto.
+  (* Case γ = s :: γ' *) simpl. apply IH.
+Qed.
+
+Lemma list_sub_inst γ : forall n s A,
+  [γ!n](s @ A) = [γ!n]s @ A.
+Proof.
+  induction γ as [ | s γ' IH]; intros.
+  (* Case γ = nil *) auto.
+  (* Case γ = s :: γ' *) simpl. apply IH.
+Qed.
+
+
+Lemma list_sub_closed_trivial : forall t j k γ, closed j t -> [γ!(j+k)]t = t.
+Proof.
+  induction γ as [ | s γ' IH]; auto; intros H_clt.
+  simpl.  rewrite sub_closed_trivial; auto.
+Qed.
+
+Lemma sub_commute : forall t s0 s1 k, closed 0 s0 -> closed 0 s1 ->
+ [s1 \ k]([s0 \ k]t) = [s0 \ k]([s1 \ (S k)]t).
+Proof.
+  induction t as [ n | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl;
+    intros s0 s1 k H0 H1.
+  (* Case #n *) order_cases.  
+     rewrite bumps_closed_trivial; auto.
+       simpl_rewrite (sub_closed_trivial s0 s1 0 k); auto.
+     rewrite bumps_closed_trivial; auto. 
+       simpl_rewrite (bump_closed_trivial s1 0 0); auto.
+       simpl_rewrite (sub_closed_trivial s1 s0 0 k); auto.
+  (* Case λx A, t0 *) rewrite IH; auto.
+  (* Case t0 * t1 *) rewrite IH0; try tauto.  rewrite IH1; tauto.
+  (* Case ΛX, t0 *) rewrite IH; auto; apply ty_bump_pres_closed; auto.
+  (* Case t0 @ A *) rewrite IH; auto.
+Qed.
+
+Lemma sub_list_commute : forall γ t s0 k, closed 0 s0 -> closed_list γ ->
+ [γ ! k]([s0 \ k]t) = [s0 \ k]([γ ! (S k)]t).
+Proof.
+  induction γ as [ | s1 γ' IH]; try auto; intros t s0 k H0 [H1 Ηγ'].
+  simpl.  rewrite sub_commute; try auto.
+Qed.
+
+Lemma closed_subst_closes_one : forall t v j k, 
+  closed 0 v -> closed (S (j+k)) t -> closed (j+k) [v\j]t.
+Proof.
+  induction t as [ n | A t0 IH | t0 IH0 t1 IH1 | t0 IH | t0 IH A]; simpl;
+    intros v j k H_v H_k.
+  (* Case #n *) order_cases; try omega.
+    apply closed_monotone with 0; try omega.
+    rewrite bumps_closed_trivial;  assumption.
+  (* Case λx A, t0 *) apply (IH v (S j) k); auto.
+  (* Case t0 * t1 *) split.
+     apply IH0; try tauto.  apply IH1; tauto.
+  (* Case ΛX, t0 *) apply IH; auto; apply ty_bump_pres_closed; auto.
+  (* Case t0 @ A *) apply IH; auto.
+Qed.
+
+Lemma long_enough_subst_closes : forall γ t,
+  closed_list γ -> closed (length γ) t -> closed 0 [γ!0]t.
+Proof.
+  induction γ as [ | s γ' IH]; try auto; simpl in *; intros t Hγ Ht.
+  (* Case γ = s :: γ' *)
+  apply IH.  tauto.  apply (closed_subst_closes_one t s 0 (length γ')); tauto.
+Qed.
+
+(*
+Goal:
+ [γ ! 0]([w \ 0]t) = [w \ 0]([γ ! 1]t)
+*)
+
+(*
 Lemma 
 Lemma tm_bump_in_sub : forall t s j k,
   tm_bump_tm k [s\k+j]t = [s\(S (k+j))] (tm_bump_tm k t).
@@ -289,85 +392,17 @@ where " [ s / n ] t " := (tm_sub_tm s n t) : t_scope.
 *)
 
 
-(* From here on is finrod’s original version:
 
-(* Substitution for the list γ, starting from index n in M *)
-Fixpoint sub (γ : list te) (n : nat) (M : te) :=
-  match γ with
-    | nil => M
-    | K :: γ => [K ↑ n][γ ! S n]M
-  end where " [ γ ! n ] M " := (sub γ n M) : t_scope.
 
-(* Substitutions are composable if they don't miss an index *)
-Lemma subcomp : forall γ δ n M,
-  ([γ ! n][δ ! n + length γ]M) = [γ ++ δ ! n]M.
-Proof.
-  induction γ; intros; simpl in *; rewrite plus_comm; simpl; [tauto |].
-  rewrite plus_comm, IHγ; reflexivity.
-Qed.
 
-(* Boring lemmas about pushing substitutions through constructors *)
 
-Lemma subst_gt : forall γ n m
-  (Hlt : n < m),
-  #n = [γ ! m](#n).
-Proof.
-  induction γ; simpl; intros; [reflexivity |].
-  rewrite <- IHγ; [| auto with arith].
-  simpl.
-  destruct (eq_nat_dec m n); [| reflexivity].
-  subst; contradict Hlt; auto with arith.
-Qed.
-Lemma sub_lam : forall γ n A M,
-  ([γ ! n]λ A, M) = λ A, [γ ! S n]M.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_app : forall γ n M N,
-  ([γ ! n](M @ N)) = [γ ! n]M @ [γ ! n]N.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_z : forall γ n,
-  ([γ ! n]z) = z.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_s : forall γ n M,
-  ([γ ! n](s M)) = s [γ ! n]M.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_rec : forall γ n M M₀ M₁,
-  ([γ ! n](rec M M₀ M₁)) = rec [γ ! n]M [γ ! n]M₀ [γ ! S (S n]M₁.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_hd : forall γ n M,
-  ([γ ! n](hd M)) = hd [γ ! n]M.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_tl : forall γ n M,
-  ([γ ! n](tl M)) = tl [γ ! n]M.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
-Lemma sub_seed : forall γ n M M₀ M₁,
-  ([γ ! n](seed M M₀ M₁)) = seed [γ ! n]M [γ ! S n]M₀ [γ ! S n]M₁.
-Proof.
-  induction γ; intros; simpl in *; [reflexivity |].
-  rewrite IHγ; simpl; reflexivity.
-Qed.
 
-*)
+
+
+
+
+
+
 
 Close Scope list_scope.
 Close Scope t_scope.

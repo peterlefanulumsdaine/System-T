@@ -99,6 +99,33 @@ Section Properties.
         intros H. simpl in *.  apply IH.  auto.
   Qed.
 
+Lemma reduce_in_app : forall s0 s1 t, (s0 |->* s1) -> (s0 * t) |->* (s1 * t).
+Proof.
+  intros s0 s1 t H_red.
+  induction H_red as [s0 s1 H_step | s0 | s0 s1 s2 Hs0s1 IHl Hs1s2 IHr].
+  (* Case step *) constructor.  constructor.  assumption.
+  (* Case refl *) apply rt_refl.
+  (* Case trans *) apply rt_trans with (s1 * t); tauto.
+Qed.
+
+Lemma nth_error_length {A} (l : list A) : forall n a,
+  nth_error l n = Some a -> n < length l.
+Proof.
+  induction l as [ | a' l' IH]; intros n a H_find;
+  destruct n as [ | n']; simpl in *.
+    inversion H_find.
+    inversion H_find.
+    omega.
+    assert (n' < length l') by (apply IH with a; auto).  omega.
+Qed.
+  
+Lemma if_types_then_closed : forall Γ t A,
+        (Γ |- t ::: A) -> closed (length Γ) t.
+Proof.
+  intros Γ t A H_typed.  induction H_typed; simpl; try tauto.
+  (* Only case #n *) apply nth_error_length with A.  assumption.
+Qed.
+
 (*
 Lemma preservation : forall Γ A t0 t1
   (H_ty : Γ |-> t0 ::: A)

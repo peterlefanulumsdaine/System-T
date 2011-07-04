@@ -7,12 +7,23 @@ Open Scope t_scope.
 Section Definitions.
 
 Definition rc :=
-  { P : tm -> Prop | forall t0 t1, t0 |-> t1-> (P t1) -> (P t0) }.
+  { P : tm -> Prop | forall t0 t1, t0 |-> t1 -> (P t1) -> (P t0) }.
 
 Definition underlying_fun : rc -> tm -> Prop :=
   fun fp => match fp with exist f _ => f end.
 
 Coercion underlying_fun : rc >-> Funclass.
+
+Lemma head_expansion (RC:rc) s t : (s |->* t) -> (RC t) -> (RC s).
+  intros H_red.
+  induction H_red as [s t H_step | s | s s' t Hss' IHl Hs't IHr]; intros H_RC.
+  (* Case step *)
+    destruct RC as [RCP RChe]; simpl in *. apply RChe with t; auto.
+  (* Case refl *)
+    tauto.
+  (* Case trans *)
+    tauto.
+Qed.
 
 Definition envir := list rc.
 
@@ -30,7 +41,7 @@ Proof.
   intros A RA B RB.
   exists (fun t => 
     exists t':tm, t |->* (λx A, t') 
-               /\ forall w, (RA w) -> (RB (tm_sub_tm w 0 t'))).
+               /\ forall w, (closed 0 w) -> (RA w) -> (RB (tm_sub_tm w 0 t'))).
   intros t0 t1 Ht0t1 [t' [Ht1t' Ht'red]].
   exists t'; split; try assumption.
   apply rt_trans with t1.  constructor; assumption.  assumption.
@@ -64,60 +75,94 @@ Fixpoint rc_list_app (Rs : rclist) (γ : list tm) : Prop :=
     | nil => True
     | _ => False
     end
-  | (R :: Rs') => match γ with
+  | (RX :: Rs') => match γ with
     | nil => False
-    | (t :: γ') => R [γ'!0]t /\ rc_list_app Rs' γ'
+    | (t :: γ') => RX [γ'!0]t /\ rc_list_app Rs' γ'
     end
   end.
 
 Coercion rc_list_app : rclist >-> Funclass.
 
-Definition R_list : envir -> list ty -> list tm -> Prop := 
-  fun ρ Γ => rc_list_app (map (R ρ) Γ).
+Definition R_list (ρ : envir) (Γ : list ty) (γ : list tm) : Prop := 
+  rc_list_app (map (R ρ) Γ) γ.
+
+Definition models Γ t A : Prop :=
+  forall ρ γ (H_cl : closed_list γ) (H_Red : R_list ρ Γ γ), R ρ A [γ!0]t.
 
 End Definitions.
+
+Notation " Γ |= t :=: A " := (models Γ t A) (at level 70) : t_scope.
+
+Section Misc_lemmas.
+
+Lemma R_list_lengths_match ρ Γ : forall γ,
+  R_list ρ Γ γ -> length Γ = length γ.
+Proof.
+  induction Γ as [ | S Γ' IH]; destruct γ as [ | t γ']; simpl; intros H_R; inversion H_R.
+    tauto.  destruct H_R as [_ H_R'].  fold rc_list_app in *.
+    assert (length Γ' = length γ'). apply IH; apply H_R'.
+    omega.
+Qed.
+
+End Misc_lemmas.
 
 Section Termination_proof.
 
 Lemma compat_var : 
       forall n Γ A (HFind : nth_error Γ n = Some A),
-      forall ρ γ (HRed : R_list ρ Γ γ),
-      R ρ A ([γ !0] #n).
+      (Γ |= #n :=: A).
 Proof.
-  induction n as [ | n' IH]; intros; destruct Γ as [ | A' Γ']; inversion HFind;
-  destruct γ as [ | t γ']; inversion HRed; subst; clear H1.
+  induction n as [ | n' IH]; unfold models; intros; destruct Γ as [ | A' Γ']; inversion HFind;
+  destruct γ as [ | t γ']; inversion H_Red; subst; clear H1.
   (* Case n = 0 *)
     simpl.  assumption. 
   (* Case n = S n' *)
-    simpl.  unfold R_list in *; simpl in HRed.
+    simpl.  unfold R_list in *; simpl in H_Red.  simpl in H_cl.
     apply IH with Γ'; tauto.
 Qed.
 
 Lemma compat_lam : forall Γ A B t
-      (Ht : forall ρ' γ' (HRed' : R_list ρ' (A :: Γ) γ'), R ρ' B [γ'!0]t),
-      forall ρ γ (HRed : R_list ρ Γ γ),
-      R ρ (A arrows B) [γ!0](λx A, t).
+      (Ht : (A :: Γ) |= t :=: B),
+      Γ |= (λx A, t) :=: A arrows B.
 Proof.
-  intros.  simpl.  exists ([map (tm_bump_tm 0) γ ! 1]t).  split.
+  unfold models in *; intros; simpl.  exists ([ γ ! 1]t).  split.
   rewrite list_sub_lam.  apply rt_refl.
-  intros w HRw.  apply Ht.
+  intros w H_cl_w H_R_w.
+  rewrite <- sub_list_commute; auto.
+  apply (Ht ρ (w :: γ)).  simpl; tauto.  split; auto.  
+  simpl_rewrite (list_sub_closed_trivial w 0 0 γ); auto. 
 Qed.
 
+Lemma compat_app : forall Γ A B s t
+      (H_tcl : closed (length Γ) t)
+      (HTs : Γ |= s :=: A arrows B)
+      (HTt : Γ |= t :=: A),
+      Γ |= s * t :=: B.
+Proof.
+  unfold models in *; intros; simpl.
+  rewrite list_sub_app.
+  destruct (HTs ρ γ H_cl H_Red) as [s1 [H_steps H_Rs1]]; fold R in H_Rs1.
+  apply head_expansion with ([[γ!0]t\0]s1).
+  (* reduction to λ; β-reduction *)
+    apply rt_trans with ((λx A, s1) * [γ!0]t).
+    apply reduce_in_app; assumption.
+    constructor.  constructor.
+  (* reducibility of result *)
+    apply H_Rs1.
+      apply long_enough_subst_closes; try auto.
+      rewrite <- (R_list_lengths_match ρ Γ γ); auto.
+    apply HTt; assumption.
+Qed.
 
-Theorem fundamental_thm : forall ρ A Γ t γ,
-  (Γ |- t ::: A) -> (R_list ρ Γ γ) -> R ρ A [γ !0 t].
+Lemma compat_Lam : forall Γ A t
+      (HT : Γ |= t :=: A),
+      Γ |= (ΛX , t) :=: allX, A.
+Qed.
+
+Theorem fundamental_thm : forall A Γ t,
+  (Γ |- t ::: A) -> (Γ |= t :=: A).
 
 Inductive types : list ty -> tm -> ty -> Prop :=
-  | tc_var  : forall Γ A n
-      (HFind : nth_error Γ n = Some A),
-      Γ |- #n ::: A
-  | tc_lam : forall Γ A B t
-      (HT : A :: Γ |- t ::: B),
-      Γ |- λx A, t ::: (A arrows B)
-  | tc_app : forall Γ A B s t
-      (HTs : Γ |- s ::: A arrows B)
-      (HTt : Γ |- t ::: A),
-      Γ |- s * t ::: B
   | tc_Lam : forall Γ A t
       (HT : Γ |- t ::: A),
       Γ |- (ΛX , t) ::: allX, A
